@@ -7,10 +7,10 @@
 
 ## Finding:
 1. Three states (CA, NY, and DC) have higher proportion of artists in the workforce. 
-2. Across nearly all states (except DC), the numbers of designers are larger than other types of artists.
+2. For nearly all states (except DC), the proportion of designers is larger than other types of artists.
 
 ## Further exploration:
-- The effect of race on the artists proportion and type.
+- The effect of race on the artists proportion and type
 
 ## Note:
 - Inspired by [Nicola Rennie’s work](https://github.com/nrennie/tidytuesday/tree/main/2022/2022-09-27) under CC-BY-4.0 license.
