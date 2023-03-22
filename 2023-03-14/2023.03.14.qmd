@@ -359,9 +359,6 @@ plot_order <- plot_order + 1
 
 
 
-## Company
-
-
 
 
 
