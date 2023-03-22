@@ -1,0 +1,374 @@
+---
+title: "2023.03.14"
+author: "Raymond Hung"
+format: 
+  html: 
+    toc: true
+    self-contained: true
+    highlight-style: "github"
+editor_options: 
+  chunk_output_type: console
+---
+
+# Library
+
+```{r Library, echo=TRUE, output=FALSE, warning=FALSE}
+library(tidyverse)
+library(here)
+library(magrittr)
+library(sjlabelled)
+library(sjmisc)
+library(splitstackshape)
+library(viridis)
+library(viridisLite)
+library(RColorBrewer)
+```
+
+# Data
+
+```{r}
+plot_order <- 1
+
+tuesdata <- tidytuesdayR::tt_load('2023-03-14')
+
+drugs <- tuesdata$drugs # n of drugs = 1988
+```
+
+# Browse
+
+```{r}
+glimpse(drugs)
+
+drugs %$% naniar::miss_var_summary(data = .) |> print(n = 29)
+
+drugs |> frq(category)             # 1706 drugs for human and 282 drugs for animal
+
+drugs |> frq(authorisation_status) # n of authorized drugs = 1573
+```
+
+```{r}
+drugs <- drugs |> mutate(across(where(is.character), as.factor))
+```
+
+```{r}
+drugs |> 
+  filter(!is.na(authorisation_status)) |> 
+  group_by(category, authorisation_status) |> 
+  count() |> 
+  ggplot(aes(y = authorisation_status, x = n, fill = category)) +
+  geom_col(position = "dodge") +
+  labs(y = "Authorization Status", x = "Number of Drugs", title = "The Number of Drugs For Treating Human and Animal") +
+  guides(fill = guide_legend(title = "Objective"))
+```
+
+::: callout-note
+1. The number of drugs invented for treating human are significantly more than that for animals.
+2. For three types of authorized status, the frequency of the status "authorized" are larger than other two types of status.
+:::
+
+
+# Explore
+
+## Category
+
+```{r}
+drugs |> 
+  filter(authorisation_status == "authorised") |> 
+  mutate(year = lubridate::year(first_published), .after = first_published) |> 
+  group_by(category, year) |> 
+  count() |> 
+  ungroup() |> 
+  group_by(category) |> 
+  mutate(cum_sum = cumsum(n)) |> 
+  filter(year >= 2013) |> 
+  mutate(labels = case_when(category == "human" & year == 2023 ~ "Human",
+                            category == "veterinary" & year == 2021 ~ "Animal",
+                            TRUE ~ "")) |> 
+  ggplot(aes(x = year, y = cum_sum, color = category)) +
+  geom_line() + geom_point() +
+  labs(x = "Year", y = "Accumulated Number of Drugs", 
+       title = "Accumulated Number of Drugs Authorized for Treating Human and Animal Since 2013",
+       caption = "(Data: TidyTuesday Data 2023.03.14)",
+       subtitle = "The Difference in Number of Authorized Drugs for Human and Animal Increased Dramatically From 2017") +
+  scale_color_viridis_d(option = "plasma", begin = 0, end = 0.5) +
+  scale_x_continuous(breaks = seq(2013, 2023, 2)) +
+  scale_y_continuous(breaks = seq(0, 1200, 200)) +
+  ggrepel::geom_label_repel(aes(label = labels), nudge_y = -1) +
+  theme(legend.position = "none",
+        plot.title    = element_text(size = 20, color = "#4e4d47", margin = margin(unit = "cm", t = 0.4)),
+        plot.subtitle = element_text(size = 15, color = "#4e4d47", margin = margin(unit = "cm", t = 0.4, b = 0.2)),
+        plot.caption  = element_text(size = 10, color = "#4e4d47", margin = margin(unit = "cm", t = 0.4, b = 0.2)))
+
+ggsave(path = here("2023-03-14/"), 
+       filename = paste0(plot_order, ". ",
+                         "Accumulated Number of Drugs Authorized for Treating Human and Animal Since 2013.png"), 
+       width = 12, height = 6, device = 'png', dpi = 700)
+
+plot_order <- plot_order + 1
+```
+
+## Species
+
+### Preprocess
+
+1.  Excluding parentheses brackets and text contained
+2.  Separating text by semicolon
+3.  Expanding columns with each unique specie and counting frequency
+
+```{r}
+drugs |> frq(species, sort.frq = "desc")
+
+
+# Separating multiple values in the column "species" and expanding each unique value into independent column.
+
+drugs <- drugs |> 
+  mutate(species_clean = str_replace_all(species, "\\s*\\(.*\\)", ""), .after = species) |>                 # remove (characters)
+  mutate(species_clean = case_when(species_clean == "Calves, neonatal less than 12 hrs of age" ~ "Calves",  # manually adjust
+                                   species_clean == "Calves, newborn" ~ "Calves",                           # manually adjust
+                                   species_clean == "Sows; Sows" ~ "Sows",                                  # manually adjust
+                                   TRUE ~ species_clean)) |> 
+  mutate(species_clean = str_replace_all(species_clean, "\\s*\\.*;\\s*", ";")) |>                           # remove spaces after ";"
+  mutate(species_clean = tolower(species_clean)) |>                                                         # change to lowercase
+  mutate(species_clean = str_replace_all(species_clean, " ", "_"))                                          # replace speace with "_"
+
+drugs |> 
+  count(species_clean) |> 
+  mutate(prop = n / sum(n)) |> 
+  arrange(desc(prop)) |> print(n = 53)
+
+drugs_expand_species <- cSplit_e(data = drugs, split.col = "species_clean", sep = ";", type = "character", fill = 0)
+
+drugs_expand_species <- drugs_expand_species |> move_columns(starts_with("species_clean_"), .after = species_clean)
+
+glimpse(drugs_expand_species)
+```
+
+
+
+```{r}
+sjmisc::col_count(drugs_expand_species |> 
+                    filter(authorisation_status == "authorised") |> 
+                    select(starts_with("species_clean_")), 
+                  count = 1, append = FALSE) |>                                                       # Count how many 1
+  pivot_longer(cols = starts_with("species_clean_"), names_to = "species", values_to = "count") |> 
+  mutate(species = str_replace(species, "species_clean_", ""),
+         species = str_to_title(species),
+         species = str_replace_all(species, "_", " ")) |> 
+  arrange(desc(count)) |> 
+  mutate(prop = count / sum(count), 
+         cum_prop = cumsum(prop)) |> 
+  ggplot(aes(y = reorder(species, count), x = count)) +
+  geom_col() +
+  theme(axis.text.x = element_text(vjust = 0.5)) +
+  labs(y = "Species", x = "Frequency", title = "Total Number of Authorized Drugs for Each Species",
+       caption = "(Note: Some drugs can be used for treating more than one kind of animal; Data: TidyTuesday Data 2023.03.14)")
+
+
+ggsave(path = here("2023-03-14/"), 
+       filename = paste0(plot_order, ". ",
+                         "Total Number of Authorized Drugs for Each Species.png"), 
+       width = 12, height = 6, device = 'png', dpi = 700)
+
+plot_order <- plot_order + 1
+```
+
+::: callout-note
+1. It seems that there is a frequency gap between sheep and calves so the numbers from calves to sows are combined as other.
+2. Some animals do not have authorized drugs, for instance, salmonidae.
+:::
+
+### Re-categorized
+
+```{r}
+drugs_expand_species <- drugs_expand_species |> 
+  rowwise() |> 
+  mutate(species_clean_other = sum(c(species_clean_calves, species_clean_rabbits, species_clean_embryonated_chicken_eggs,
+                                     species_clean_turkeys, species_clean_ducks, species_clean_ferrets,
+                                     species_clean_bees, species_clean_embryonated_eggs, species_clean_guinea_pigs,
+                                     species_clean_atlantic_salmon, species_clean_avian, species_clean_goats,
+                                     species_clean_honey_bees, species_clean_male_pigs, species_clean_pheasants,
+                                     species_clean_raccoon_dogs, species_clean_red_foxes, species_clean_salmonidae,
+                                     species_clean_sows))) |> 
+  mutate(species_clean_other = case_when(species_clean_other >= 1 ~ 1,
+                                         TRUE ~ species_clean_other)) |> 
+  select(-c(species_clean_calves, species_clean_rabbits, species_clean_embryonated_chicken_eggs,
+            species_clean_turkeys, species_clean_ducks, species_clean_ferrets,
+            species_clean_bees, species_clean_embryonated_eggs, species_clean_guinea_pigs,
+            species_clean_atlantic_salmon, species_clean_avian, species_clean_goats,
+            species_clean_honey_bees, species_clean_male_pigs, species_clean_pheasants,
+            species_clean_raccoon_dogs, species_clean_red_foxes, species_clean_salmonidae,
+            species_clean_sows)) |> 
+  relocate(species_clean_other, .before = first_published)
+```
+
+
+
+```{r}
+drugs_expand_species_long <- drugs_expand_species |> 
+  pivot_longer(cols = starts_with("species_clean_"), names_to = "species_refactored", values_to = "frq_refactored")
+
+drugs_expand_species_long |> 
+  group_by(species_refactored) |> 
+  filter(frq_refactored == 1) |> 
+  count(sort = TRUE)
+
+color_palette <- c("#c2df23", "#86d549", "#52c569", "#595959", "#2ab07f", "#1e9b8a", "#25858e", "#2d708e")
+
+drugs_expand_species_long |> 
+  filter(category != "human" & authorisation_status == "authorised") |> 
+  mutate(species_refactored = as.factor(species_refactored),
+         species_refactored = str_replace(species_refactored, "species_clean_", ""),
+         species_refactored = str_to_title(species_refactored)) |>
+  group_by(species_refactored) |> 
+  filter(frq_refactored == 1) |> 
+  count(sort = TRUE) |> 
+  ggplot(aes(y = reorder(species_refactored, n), x = n, fill = reorder(species_refactored, n))) +
+  scale_fill_manual(values = color_palette) +
+  geom_col() +
+  labs(x = "Number of Drugs Authorized", y = "Category of Animal",
+       title = "Total Number of Drugs Authorized for Different Kinds of Animal",
+       subtitle = "Other Category includes animals like bees, raccoon dogs, and salmonidae",
+       caption = "(Data: TidyTuesday Data 2023.03.14)") +
+  theme(legend.position = "none",
+        plot.title    = element_text(size = 20, color = "#4e4d47", margin = margin(unit = "cm", t = 0.4)),
+        plot.subtitle = element_text(size = 15, color = "#4e4d47", margin = margin(unit = "cm", t = 0.4, b = 0.2)),
+        plot.caption  = element_text(size = 10, color = "#4e4d47", margin = margin(unit = "cm", t = 0.4, b = 0.2)))
+
+ggsave(path = here("2023-03-14/"), 
+       filename = paste0(plot_order, ". ",
+                         "Total Number of Drugs Authorized for Different Kinds of Animal.png"), 
+       width = 12, height = 6, device = 'png', dpi = 700)
+
+plot_order <- plot_order + 1
+```
+
+
+## Therapeutic Area
+
+```{r}
+drugs |> select(therapeutic_area) |> slice_sample(n = 20)
+```
+
+### Preprocess
+
+1.  Excluding parentheses brackets and text contained
+2.  Separating text by semicolon
+3.  Expanding columns with each unique specie and counting frequency
+
+
+```{r}
+drugs <- drugs |> 
+  mutate(therapeutic_area_short = if_else(!is.na(therapeutic_area), paste(therapeutic_area, ";", sep = ""), NA_character_)) |> 
+  mutate(therapeutic_area_short = str_replace_all(therapeutic_area_short, ";", ":;")) |> 
+  mutate(therapeutic_area_short = qdapRegex::rm_between(therapeutic_area_short, left = ",", righ = ":", replacement = ""), 
+         .after = therapeutic_area) |> 
+  mutate(therapeutic_area_short = str_replace_all(therapeutic_area_short, ":;", ";")) |> 
+  mutate(therapeutic_area_short = str_replace_all(therapeutic_area_short, ";\\s*", ";")) |> 
+  mutate(therapeutic_area_short = str_to_lower(therapeutic_area_short)) |> 
+  mutate(therapeutic_area_short = str_replace_all(therapeutic_area_short, " ", "_"))
+  
+```
+
+
+```{r}
+drugs_expand_areas <- cSplit_e(data = drugs, split.col = "therapeutic_area_short", sep = ";", type = "character", fill = 0)
+
+drugs_expand_areas <- drugs_expand_areas |> 
+  relocate(therapeutic_area_short, .after = therapeutic_area) |> 
+  move_columns(starts_with("therapeutic_area_short_"), .after = therapeutic_area_short)
+
+glimpse(drugs_expand_areas)
+```
+
+
+```{r}
+color_palette_2 <- c("#c2df23", "#86d549", "#52c569", "#2ab07f", "#1e9b8a", "#25858e", "#2d708e")
+
+sjmisc::col_count(drugs_expand_areas |> 
+                    filter(authorisation_status == "authorised") |> 
+                    select(starts_with("therapeutic_area_short_")), 
+                  count = 1, append = FALSE) |> 
+  pivot_longer(cols = starts_with("therapeutic_area_short_"), names_to = "therapeutic_area_clean", values_to = "count") |> 
+  mutate(therapeutic_area_clean = str_replace(therapeutic_area_clean, "therapeutic_area_short_", ""),
+         therapeutic_area_clean = str_to_title(therapeutic_area_clean),
+         therapeutic_area_clean = str_replace_all(therapeutic_area_clean, "_", " ")) |> 
+  arrange(desc(count)) |> 
+  mutate(prop = count / sum(count), 
+         cum_prop = cumsum(prop)) |> 
+  head(7) |> 
+  ggplot(aes(y = reorder(therapeutic_area_clean, count), x = count, fill = reorder(therapeutic_area_clean, count))) +
+  geom_col() +
+  theme(axis.text.x = element_text(vjust = 0.5)) +
+  scale_fill_manual(values = color_palette_2) +
+  labs(y = "Therapeutic Area", x = "Number of Drugs Authorized", title = "Top 7 Therapeutic Area and Number of Authorized Drugs",
+       caption = "(Note: The area categories presented here are like unbrella terms. For example, Diabetes Mellitus contains Diabetes Mellitus and Diabetes Mellitus Type 2; Data: TidyTuesday Data 2023.03.14)",
+       subtitle = "Diabetes Mellitus has the highest number of authorized drugs") +
+  theme(legend.position = "none",
+        plot.title    = element_text(size = 20, color = "#4e4d47", margin = margin(unit = "cm", t = 0.4)),
+        plot.subtitle = element_text(size = 15, color = "#4e4d47", margin = margin(unit = "cm", t = 0.4, b = 0.2)),
+        plot.caption  = element_text(size = 10, color = "#4e4d47", margin = margin(unit = "cm", t = 0.4, b = 0.2)))
+
+
+ggsave(path = here("2023-03-14/"), 
+       filename = paste0(plot_order, ". ",
+                         "Total Number of Drugs Authorized for Different Kinds of Therapeutic Area.png"), 
+       width = 12, height = 6, device = 'png', dpi = 700)
+
+plot_order <- plot_order + 1
+```
+
+
+
+```{r}
+# Count the number of therapeutic areas of each drugs
+
+drugs <- drugs |> 
+  mutate(therapeutic_area_count = str_count(therapeutic_area, ";") + 1, .after = therapeutic_area)
+
+drugs |> 
+  filter(authorisation_status == "authorised") |> 
+  janitor::tabyl(therapeutic_area_count)
+
+my_PuRd = brewer.pal(n = 9, "RdYlGn")[1:9]
+
+drugs |> 
+  filter(authorisation_status == "authorised") |> 
+  janitor::tabyl(therapeutic_area_count) |>  
+  mutate(valid_percent_cum = cumsum(valid_percent)) |> 
+  filter(!is.na(therapeutic_area_count) & therapeutic_area_count <= 10) |> 
+  ggplot(aes(x = therapeutic_area_count, y = valid_percent, fill = therapeutic_area_count)) +
+  geom_col(width = 1, color = "white") +
+  scale_y_continuous(labels = scales::label_percent(), breaks = seq(0, 0.7, 0.1)) +
+  scale_x_continuous(breaks = seq(1, 9, 1)) +
+  labs(x = "Number of Therapeutic Area", y = "Proportion of Authorized Drugs",  
+       title = "Proportion of Authorized Drugs of Human for Number of Therapeutic Area",
+       caption = "(Note: This graph only contains drugs with total number less than ten; Data: TidyTuesday Data 2023.03.14)") +
+  theme(legend.position = "none",
+        plot.title    = element_text(size = 20, color = "#4e4d47", margin = margin(unit = "cm", t = 0.4)),
+        plot.subtitle = element_text(size = 15, color = "#4e4d47", margin = margin(unit = "cm", t = 0.4, b = 0.2)),
+        plot.caption  = element_text(size = 10, color = "#4e4d47", margin = margin(unit = "cm", t = 0.4, b = 0.2)))
+
+
+ggsave(path = here("2023-03-14/"), 
+       filename = paste0(plot_order, ". ",
+                         "Total Number of Drugs Authorized for Different Kinds of Therapeutic Area.png"), 
+       width = 12, height = 6, device = 'png', dpi = 700)
+
+plot_order <- plot_order + 1
+```
+
+
+
+## Company
+
+
+
+
+
+
+
+
+
+
+
+
