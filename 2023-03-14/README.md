@@ -24,7 +24,7 @@
 ![Category of Area](https://github.com/CuteChuanChuan/TidyTuesday/blob/main/2023-03-14/04.%20Total%20Number%20of%20Drugs%20Authorized%20for%20Different%20Kinds%20of%20Therapeutic%20Area.jpeg)
 
 ## Further exploration:
-- The company of authorized drugs
+- companies of authorized drugs
 
 ## Note:
 - None
